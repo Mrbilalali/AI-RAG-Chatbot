@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-import tempfile
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
@@ -12,11 +11,10 @@ from langchain.memory import ConversationBufferMemory
 st.set_page_config(page_title="Emporio Solution Support", page_icon="💬", layout="centered")
 st.title("💬 Emporio Support Assistant")
 
-# Sidebar for API Key and PDF Upload 
+# Sidebar for API Key
 with st.sidebar:
     st.header("Configuration")    
     api_key_input = st.text_input("Enter your OpenAI API Key:", type="password", key="api_key_input")
-    uploaded_file = st.file_uploader("Upload your PDF document", type="pdf", key="pdf_uploader")
 
 # Session State Initialization
 if "openai_api_key" not in st.session_state:
@@ -25,8 +23,6 @@ if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if "processed_file_name" not in st.session_state:
-    st.session_state.processed_file_name = ""
 
 # Update API key from input
 if api_key_input:
@@ -37,39 +33,27 @@ if not st.session_state.openai_api_key:
     st.info("Please enter your OpenAI API key in the sidebar to begin.")
     st.stop()
 
-if uploaded_file:
-    # Process the file only if its new
-    if uploaded_file.name != st.session_state.processed_file_name:
-        with st.spinner("Processing your document... This may take a moment."):
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmpfile:
-                    tmpfile.write(uploaded_file.getvalue())
-                    tmp_path = tmpfile.name
+# Load the document and create the vectorstore if it doesn't exist
+if st.session_state.vectorstore is None:
+    with st.spinner("Processing document... This may take a moment."):
+        try:
+            # Load and split the document
+            loader = PyPDFLoader("docs/customer_support_policy.pdf")
+            docs = loader.load()
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+            split_docs = text_splitter.split_documents(docs)
 
-                # Load and split the document
-                loader = PyPDFLoader(tmp_path)
-                docs = loader.load()
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-                split_docs = text_splitter.split_documents(docs)
+            # Create embeddings and vector store
+            embeddings = OpenAIEmbeddings(openai_api_key=st.session_state.openai_api_key)
+            vectorstore = Chroma.from_documents(split_docs, embeddings)
 
-                # Create embeddings and vector store
-                embeddings = OpenAIEmbeddings(openai_api_key=st.session_state.openai_api_key)
-                vectorstore = Chroma.from_documents(split_docs, embeddings)
+            # Store in session state
+            st.session_state.vectorstore = vectorstore
+            st.success("Document processed successfully! You can now ask questions.")
 
-                # Store in session state
-                st.session_state.vectorstore = vectorstore
-                st.session_state.processed_file_name = uploaded_file.name
-                
-                # Clean up temp file
-                os.remove(tmp_path)
-                st.success("Document processed successfully! You can now ask questions.")
-
-            except Exception as e:
-                st.error(f"An error occurred while processing the file: {e}")
-                st.stop()
-else:
-    st.info("Please upload a PDF document to start the chat.")
-    st.stop()
+        except Exception as e:
+            st.error(f"An error occurred while processing the file: {e}")
+            st.stop()
 
 # Proceed only if vectorstore is ready
 if st.session_state.vectorstore is None:
